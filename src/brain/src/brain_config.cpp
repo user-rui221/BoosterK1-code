@@ -576,3 +576,23 @@ void BrainConfig::print(ostream &os)
     os << "    enableCom = " << get_enable_com() << endl;
     os << "----------------------------------------" << endl;
 }
+void BrainConfig::loadLocalization() {
+    auto node = static_cast<rclcpp::Node*>(brain);
+    auto source = node->get_parameter("localization.source").as_string();
+    if (source != "vision" && source != "simulation_ground_truth")
+        throw std::invalid_argument("localization.source must be vision or simulation_ground_truth");
+    useGroundTruth = source == "simulation_ground_truth";
+    groundTruthTopic = node->get_parameter("localization.ground_truth_topic").as_string();
+    groundTruthTimeout = node->get_parameter("localization.timeout_sec").as_double();
+    groundTruthTransform = {
+        node->get_parameter("localization.translation_x").as_double(),
+        node->get_parameter("localization.translation_y").as_double(),
+        node->get_parameter("localization.rotation_yaw").as_double()};
+    if (groundTruthTopic.empty() || !std::isfinite(groundTruthTimeout) || groundTruthTimeout <= 0 ||
+        !std::isfinite(groundTruthTransform.x) || !std::isfinite(groundTruthTransform.y) ||
+        !std::isfinite(groundTruthTransform.theta))
+        throw std::invalid_argument("Invalid localization topic, timeout or transform");
+    RCLCPP_INFO(node->get_logger(), "Localization: %s, topic=%s, timeout=%.3fs, transform=(%.3f, %.3f, %.3f)",
+        source.c_str(), groundTruthTopic.c_str(), groundTruthTimeout,
+        groundTruthTransform.x, groundTruthTransform.y, groundTruthTransform.theta);
+}

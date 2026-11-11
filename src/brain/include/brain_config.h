@@ -28,6 +28,13 @@ public:
     // Pointer to ROS2 node used to access parameters
     BrainConfig(Brain *argBrain);
 
+    // Cached at startup: subscription and source must change together.
+    bool useGroundTruth = false;
+    string groundTruthTopic;
+    double groundTruthTimeout = 0.5;
+    Pose2D groundTruthTransform;
+    void loadLocalization();
+
     int get_player_id();
     int get_team_id();
     string get_player_role();

@@ -126,6 +126,12 @@ public:
     bool isBoundingBoxInCenter(BoundingBox boundingBox, double xRatio = 0.8, double yRatio = 0.8);
 
     void calibrateOdom(double x, double y, double theta);
+    bool localizationReady();
+    void haltForInvalidLocalization();
+    void groundTruthCallback(const geometry_msgs::msg::Pose2D &msg);
+    void synchronizeOdomTransform();
+    // Serializes decision and sensor callbacks in ground-truth mode.
+    std::recursive_mutex localizationMutex;
 
     double msecsSince(rclcpp::Time time);
 
@@ -268,6 +274,7 @@ private:
     void logDebugInfo();
 
 
+    rclcpp::Subscription<geometry_msgs::msg::Pose2D>::SharedPtr groundTruthSubscription;
     rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr joySubscription;
     rclcpp::Subscription<game_controller_interface::msg::GameControlData>::SharedPtr gameControlSubscription;
     rclcpp::Subscription<vision_interface::msg::Detections>::SharedPtr detectionsSubscription;

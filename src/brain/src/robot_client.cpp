@@ -49,11 +49,14 @@ int RobotClient::standUp()
 
 int RobotClient::RLVisionKick(bool start)
 {
+    if (start && !brain->localizationReady()) return -1;
+    if (brain->config->useGroundTruth) brain->data->groundTruthKickActive = start;
     booster_interface::msg::BoosterApiReqMsg msg;
     msg.api_id = static_cast<int64_t>(booster::robot::b1::LocoApiId::kVisualKick);
-    nlohmann::json body;
-    body["start"] = start;  // Add start parameter to indicate whether to enter VisualKick mode
-    msg.body = body.dump();
+    // The current locomotion API requires both start and a numeric version.
+    const booster::robot::b1::VisualKickParameter parameter(
+        start, booster::robot::b1::VisualKickVersion::kV1);
+    msg.body = parameter.ToJson().dump();
     std::cout << "RobotClient::RLVisionKick called with start=" << (start ? "true" : "false") << std::endl;
     return call(msg);
 }
@@ -76,6 +79,7 @@ int RobotClient::waveHand(bool doWaveHand)
 
 int RobotClient::setVelocity(double x, double y, double theta)
 {
+    if (!brain->localizationReady()) x = y = theta = 0;
     brain->log->log("RobotClient/setVelocity_in",
                     format("vx: %.2f  vy: %.2f  vtheta: %.2f", x, y, theta));
 

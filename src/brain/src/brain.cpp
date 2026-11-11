@@ -117,6 +117,16 @@ Brain::Brain() : rclcpp::Node("brain_node")
     declare_parameter<double>("RLVisionKick.autoVisualKickEnableDistMax", 1.5);
     declare_parameter<double>("RLVisionKick.autoVisualKickEnableAngle", 0.5);
     
+    rcl_interfaces::msg::ParameterDescriptor localizationDescriptor;
+    localizationDescriptor.read_only = true;
+    localizationDescriptor.description = "Localization configuration; restart brain to change";
+    declare_parameter<string>("localization.source", "vision", localizationDescriptor);
+    declare_parameter<string>("localization.ground_truth_topic", "/soccer/sim/localization/robot_pose", localizationDescriptor);
+    declare_parameter<double>("localization.timeout_sec", 0.5, localizationDescriptor);
+    declare_parameter<double>("localization.translation_x", 0.0, localizationDescriptor);
+    declare_parameter<double>("localization.translation_y", 0.0, localizationDescriptor);
+    declare_parameter<double>("localization.rotation_yaw", 0.0, localizationDescriptor);
+
     declare_parameter<int>("locator.min_marker_count", 5);
     declare_parameter<double>("locator.max_residual", 0.3);
 
@@ -146,8 +156,13 @@ void Brain::init()
     
     config = std::make_shared<BrainConfig>(this);
     loadConfig();
+    config->loadLocalization();
 
     data = std::make_shared<BrainData>();
+    if (config->useGroundTruth) {
+        data->ball = GameObject();
+        data->tmBall = GameObject();
+    }
     locator = std::make_shared<Locator>();
     log = std::make_shared<BrainLog>(this);
     tree = std::make_shared<BrainTree>(this);
@@ -180,6 +195,13 @@ void Brain::init()
     }
     data->tmLastCmdChangeTime = now;
 
+
+    if (config->useGroundTruth) {
+        groundTruthSubscription = create_subscription<geometry_msgs::msg::Pose2D>(
+            config->groundTruthTopic, rclcpp::SensorDataQoS().keep_last(1),
+            bind(&Brain::groundTruthCallback, this, _1));
+        RCLCPP_WARN(get_logger(), "Waiting for ground truth; movement is inhibited until a valid pose arrives");
+    }
 
     string topic_suffix = "";
     if(config->get_robot_name() != "") {
@@ -315,6 +337,20 @@ void Brain::loadConfig()
 
 void Brain::tick()
 {
+    std::unique_lock<std::recursive_mutex> localizationLock(localizationMutex, std::defer_lock);
+    if (config->useGroundTruth) localizationLock.lock();
+    if (config->useGroundTruth) {
+        const bool ready = localizationReady();
+        tree->setEntry<bool>("odom_calibrated", ready);
+        if (!ready) {
+            haltForInvalidLocalization();
+            handleCooperation();
+            return;
+        }
+        if (data->groundTruthBlocked)
+            RCLCPP_INFO(get_logger(), "Ground truth available: actions enabled");
+        data->groundTruthBlocked = false;
+    }
     // Output debug & log related information
     logDebugInfo();
     logLags();
@@ -932,6 +968,7 @@ bool Brain::isDefensing() {
 
 void Brain::calibrateOdom(double x, double y, double theta)
 {
+    if (config->useGroundTruth) return; // Ground truth is the only field-pose writer.
 
     double x_or, y_or, theta_or; // or = odom to robot
     x_or = -cos(data->robotPoseToOdom.theta) * data->robotPoseToOdom.x - sin(data->robotPoseToOdom.theta) * data->robotPoseToOdom.y;
@@ -971,11 +1008,15 @@ void Brain::calibrateOdom(double x, double y, double theta)
         updateFieldPos(goalposts[i]);
     }
     
+    data->setGoalposts(goalposts);
+
     // markers
     auto markings = data->getMarkings();
     for (int i = 0; i < markings.size(); i++) {
         updateFieldPos(markings[i]);
     }
+
+    data->setMarkings(markings);
 
     // relog
     vector<GameObject> gameObjects = {};
@@ -1045,6 +1086,8 @@ rclcpp::Time Brain::timePointFromHeader(std_msgs::msg::Header header) {
 
 void Brain::joystickCallback(const booster_interface::msg::RemoteControllerState &joy)
 {
+    std::unique_lock<std::recursive_mutex> localizationLock(localizationMutex, std::defer_lock);
+    if (config->useGroundTruth) localizationLock.lock();
     auto log_ = [=](string msg) {
         log->debug("joystick", msg);
     };
@@ -1097,6 +1140,8 @@ void Brain::joystickCallback(const booster_interface::msg::RemoteControllerState
 
 void Brain::gameControlCallback(const game_controller_interface::msg::GameControlData &msg)
 {
+    std::unique_lock<std::recursive_mutex> localizationLock(localizationMutex, std::defer_lock);
+    if (config->useGroundTruth) localizationLock.lock();
     if (get_parameter(GAME_AGENT_MODE_PARAM).as_bool()) {
         prtWarn("Agent mode, ignore game control");
         return;
@@ -1228,6 +1273,9 @@ void Brain::gameControlCallback(const game_controller_interface::msg::GameContro
 
 void Brain::detectionsCallback(const vision_interface::msg::Detections &msg)
 {
+    std::unique_lock<std::recursive_mutex> localizationLock(localizationMutex, std::defer_lock);
+    if (config->useGroundTruth) localizationLock.lock();
+    if (!localizationReady()) return;
     // std::lock_guard<std::mutex> guard(data->brainMutex);
     
     // auto detection_time_stamp = msg.header.stamp;
@@ -1290,6 +1338,9 @@ void Brain::updateLinePosToField(FieldLine& line) {
 
 void Brain::fieldLineCallback(const vision_interface::msg::LineSegments &msg)
 {
+    std::unique_lock<std::recursive_mutex> localizationLock(localizationMutex, std::defer_lock);
+    if (config->useGroundTruth) localizationLock.lock();
+    if (!localizationReady()) return;
     auto timePoint = timePointFromHeader(msg.header);
 
     auto now = get_clock()->now();
@@ -1320,11 +1371,17 @@ void Brain::fieldLineCallback(const vision_interface::msg::LineSegments &msg)
 
 void Brain::odometerCallback(const booster_interface::msg::Odometer &msg)
 {
+    std::unique_lock<std::recursive_mutex> localizationLock(localizationMutex, std::defer_lock);
+    if (config->useGroundTruth) localizationLock.lock();
 
     data->robotPoseToOdom.x = msg.x * config->get_robot_odom_factor();
     data->robotPoseToOdom.y = msg.y * config->get_robot_odom_factor();
     data->robotPoseToOdom.theta = msg.theta;
 
+    if (config->useGroundTruth) {
+        if (data->groundTruthReceived) synchronizeOdomTransform();
+        return;
+    }
     // Based on Odom information, update the robot's position in the Field coordinate system
     transCoord(
         data->robotPoseToOdom.x, data->robotPoseToOdom.y, data->robotPoseToOdom.theta,
@@ -1336,6 +1393,8 @@ void Brain::odometerCallback(const booster_interface::msg::Odometer &msg)
 
 void Brain::lowStateCallback(const booster_interface::msg::LowState &msg)
 {
+    std::unique_lock<std::recursive_mutex> localizationLock(localizationMutex, std::defer_lock);
+    if (config->useGroundTruth) localizationLock.lock();
     data->headYaw = msg.motor_state_serial[0].q;
     data->headPitch = msg.motor_state_serial[1].q;
     log->debug("head_angles", format("pitch: %.1f, yaw: %.1f", data->headYaw, data->headPitch));
@@ -1343,12 +1402,16 @@ void Brain::lowStateCallback(const booster_interface::msg::LowState &msg)
 
 void Brain::imageCameraInfoCallback(const sensor_msgs::msg::CameraInfo::SharedPtr msg)
 {
+    std::unique_lock<std::recursive_mutex> localizationLock(localizationMutex, std::defer_lock);
+    if (config->useGroundTruth) localizationLock.lock();
     config->cameraImageWidth = msg->width;
     config->cameraImageHeight = msg->height;
 }
 
 void Brain::depthCameraInfoCallback(const sensor_msgs::msg::CameraInfo::SharedPtr msg)
 {
+    std::unique_lock<std::recursive_mutex> localizationLock(localizationMutex, std::defer_lock);
+    if (config->useGroundTruth) localizationLock.lock();
 
     // Using CameraInfo, calculate the camera's fovx and fovy
     config->depthCameraFx = static_cast<double>(msg->k[0]);
@@ -1363,6 +1426,8 @@ void Brain::depthCameraInfoCallback(const sensor_msgs::msg::CameraInfo::SharedPt
 
 void Brain::headPoseCallback(const geometry_msgs::msg::Pose& msg)
 {
+    std::unique_lock<std::recursive_mutex> localizationLock(localizationMutex, std::defer_lock);
+    if (config->useGroundTruth) localizationLock.lock();
     // Calculate head_to_base matrix
     Eigen::Matrix4d headToBase = Eigen::Matrix4d::Identity();
     
@@ -1388,6 +1453,8 @@ void Brain::headPoseCallback(const geometry_msgs::msg::Pose& msg)
 
 void Brain::recoveryStateCallback(const booster_interface::msg::RawBytesMsg &msg)
 {
+    std::unique_lock<std::recursive_mutex> localizationLock(localizationMutex, std::defer_lock);
+    if (config->useGroundTruth) localizationLock.lock();
     // uint8_t state; // IS_READY = 0, IS_FALLING = 1, HAS_FALLEN = 2, IS_GETTING_UP = 3,  
     // uint8_t is_recovery_available; // 1 for available, 0 for not available
     // Using RobotRecoveryState structure, convert msg inside msg to RobotRecoveryState
@@ -1950,6 +2017,9 @@ void Brain::updateFieldPos(GameObject &obj) {
 
 void Brain::compressedDepthImageCallback(const sensor_msgs::msg::CompressedImage::SharedPtr msg)
 {
+    std::unique_lock<std::recursive_mutex> localizationLock(localizationMutex, std::defer_lock);
+    if (config->useGroundTruth) localizationLock.lock();
+    if (!localizationReady()) return;
     try {
         // Decode compressed image
         cv::Mat compressed_data = cv::Mat(msg->data);
@@ -1980,6 +2050,9 @@ void Brain::compressedDepthImageCallback(const sensor_msgs::msg::CompressedImage
 
 void Brain::depthImageCallback(const sensor_msgs::msg::Image::ConstSharedPtr &msg)
 {
+    std::unique_lock<std::recursive_mutex> localizationLock(localizationMutex, std::defer_lock);
+    if (config->useGroundTruth) localizationLock.lock();
+    if (!localizationReady()) return;
     try {
         // Check if the image data is valid
         if (msg->data.empty() || msg->height == 0 || msg->width == 0) {
@@ -2380,6 +2453,8 @@ bool Brain::isFreekickStartPlacing() {
 
 
 void Brain::agentCommandCallback(const std_msgs::msg::String::SharedPtr msg) {
+    std::unique_lock<std::recursive_mutex> localizationLock(localizationMutex, std::defer_lock);
+    if (config->useGroundTruth) localizationLock.lock();
     RCLCPP_INFO(get_logger(), "Received agent command: %s", msg->data.c_str());
 
     data->timeLastGamecontrolMsg = get_clock()->now();
@@ -2640,4 +2715,83 @@ void Brain::publishTeammatesPoses()
     }
     
     pubTeammatesPoses->publish(msg);
+}
+// Pose2D has no timestamp: freshness here is reception freshness, not simulation age.
+bool Brain::localizationReady() {
+    if (!config->useGroundTruth) return true;
+    std::lock_guard<std::recursive_mutex> lock(localizationMutex);
+    return data->groundTruthReceived && get_clock()->now() >= data->lastSuccessfulLocalizeTime &&
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - data->groundTruthReceivedAt).count()
+            <= config->groundTruthTimeout;
+}
+
+void Brain::synchronizeOdomTransform() {
+    const auto &r = data->robotPoseToOdom;
+    const auto &f = data->robotPoseToField;
+    const double a = toPInPI(f.theta - r.theta);
+    data->odomToField = {f.x - cos(a)*r.x + sin(a)*r.y,
+                         f.y - sin(a)*r.x - cos(a)*r.y, a};
+}
+
+void Brain::groundTruthCallback(const geometry_msgs::msg::Pose2D &msg) {
+    std::lock_guard<std::recursive_mutex> lock(localizationMutex);
+    if (!std::isfinite(msg.x) || !std::isfinite(msg.y) || !std::isfinite(msg.theta)) {
+        data->groundTruthReceived = false;
+        return;
+    }
+    const bool clockReset = data->groundTruthReceived &&
+        get_clock()->now() < data->lastSuccessfulLocalizeTime;
+    const bool recovering = !localizationReady() || clockReset;
+    if (recovering) {
+        data->groundTruthReceived = false;
+        haltForInvalidLocalization();
+    }
+    const auto &t = config->groundTruthTransform;
+    Pose2D pose;
+    transCoord(msg.x, msg.y, msg.theta, t.x, t.y, t.theta, pose.x, pose.y, pose.theta);
+    pose.theta = toPInPI(pose.theta);
+    if (!std::isfinite(pose.x) || !std::isfinite(pose.y) || !std::isfinite(pose.theta)) {
+        data->groundTruthReceived = false;
+        return;
+    }
+    data->robotPoseToField = pose;
+    synchronizeOdomTransform();
+    data->groundTruthReceived = true;
+    data->groundTruthReceivedAt = std::chrono::steady_clock::now();
+    data->lastSuccessfulLocalizeTime = get_clock()->now();
+    tree->setEntry<bool>("odom_calibrated", true);
+    if (recovering) {
+        // Old detections may belong to a pre-reset world; require fresh observations.
+        data->ballDetected = false;
+        data->ball = GameObject();
+        data->ball.timePoint = get_clock()->now();
+        data->tmBall = GameObject();
+        data->tmBall.timePoint = get_clock()->now();
+        tree->setEntry<bool>("tm_ball_pos_reliable", false);
+        data->shouldExitRLVisionKick = false;
+        data->setRobots({});
+        data->setObstacles({});
+        data->setGoalposts({});
+        data->setMarkings({});
+        data->setFieldLines({});
+        tree->setEntry<bool>("ball_location_known", false);
+        tree->setEntry<bool>("ball_out", false);
+    }
+    // Existing field observations remain fixed; new detections use the latest pose.
+    // updateMemory() derives their current robot-relative positions on the next tick.
+}
+
+void Brain::haltForInvalidLocalization() {
+    tree->setEntry<bool>("odom_calibrated", false);
+    if (!data->groundTruthBlocked) {
+        tree->halt();
+        if (data->groundTruthKickActive) {
+            client->RLVisionKick(false);
+            client->robocupWalk();
+        }
+        data->tmImInVisualKick = false;
+        RCLCPP_WARN(get_logger(), "Ground truth lost/invalid/reset: actions halted");
+    }
+    data->groundTruthBlocked = true;
+    client->setVelocity(0, 0, 0);
 }

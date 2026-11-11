@@ -20,6 +20,7 @@ public:
     void init();
 
     void tick();
+    void halt() { tree.haltTree(); }
 
     // get entry on blackboard
     template <typename T>

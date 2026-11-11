@@ -1,5 +1,14 @@
 brain_node:
   ros__parameters:
+    # Startup-only selection; restart brain after changing these settings.
+    localization:
+      source: vision # vision | simulation_ground_truth
+      ground_truth_topic: /soccer/sim/localization/robot_pose # exact topic, no automatic suffix
+      timeout_sec: 0.5 # monotonic wall time since last valid message
+      translation_x: 0.0 # metres; world -> brain field
+      translation_y: 0.0
+      rotation_yaw: 0.0 # radians; use pi when attacking world -X
+
     game:
       team_id: 29 # must be consistent with GameControl
       player_id: 1 # 1 | 2 | 3 | 4 | 5

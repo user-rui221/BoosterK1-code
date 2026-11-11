@@ -1480,6 +1480,8 @@ NodeStatus CheckAndStandUp::tick()
 
 NodeStatus CalibrateOdom::tick()
 {
+    if (brain->config->useGroundTruth)
+        return brain->localizationReady() ? NodeStatus::SUCCESS : NodeStatus::FAILURE;
     double x, y, theta;
     getInput("x", x);
     getInput("y", y);

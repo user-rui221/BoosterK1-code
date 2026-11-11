@@ -2,6 +2,7 @@
 
 #include <string>
 #include <mutex>
+#include <chrono>
 #include <tuple>
 
 #include <sensor_msgs/msg/image.hpp>
@@ -40,6 +41,11 @@ public:
     /* ------------------------------------ Data recording ------------------------------------ */
 
    
+    bool groundTruthReceived = false;
+    bool groundTruthBlocked = true;
+    bool groundTruthKickActive = false;
+    std::chrono::steady_clock::time_point groundTruthReceivedAt;
+
     Pose2D robotPoseToOdom;  
     Pose2D odomToField;      
     Pose2D robotPoseToField; 

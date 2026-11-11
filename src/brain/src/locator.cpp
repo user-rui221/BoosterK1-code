@@ -347,6 +347,8 @@ LocateResult Locator::locateRobot(vector<FieldMarker> markers_r, PoseBox2D const
 
 NodeStatus SelfLocate::tick()
 {
+    if (brain->config->useGroundTruth)
+        return brain->localizationReady() ? NodeStatus::SUCCESS : NodeStatus::FAILURE;
     double interval = getInput<double>("msecs_interval").value();
     if (brain->msecsSince(brain->data->lastSuccessfulLocalizeTime) < interval) return NodeStatus::SUCCESS;
 
@@ -428,6 +430,8 @@ NodeStatus SelfLocate::tick()
 
 NodeStatus SelfLocateEnterField::tick()
 {
+    if (brain->config->useGroundTruth)
+        return brain->localizationReady() ? NodeStatus::SUCCESS : NodeStatus::FAILURE;
     double interval = getInput<double>("msecs_interval").value();
     if (brain->msecsSince(brain->data->lastSuccessfulLocalizeTime) < interval) return NodeStatus::SUCCESS;
 
@@ -497,6 +501,8 @@ NodeStatus SelfLocateEnterField::tick()
 
 NodeStatus SelfLocate1M::tick()
 {
+    if (brain->config->useGroundTruth)
+        return brain->localizationReady() ? NodeStatus::SUCCESS : NodeStatus::FAILURE;
     double interval = getInput<double>("msecs_interval").value();
     double maxDist = getInput<double>("max_dist").value();
     if (brain->client->isStandingStill(2000)) maxDist *= 1.5; 
@@ -604,6 +610,8 @@ NodeStatus SelfLocate1M::tick()
 
 NodeStatus SelfLocate2X::tick()
 {
+    if (brain->config->useGroundTruth)
+        return brain->localizationReady() ? NodeStatus::SUCCESS : NodeStatus::FAILURE;
     double interval = getInput<double>("msecs_interval").value();
     double maxDist = getInput<double>("max_dist").value();
     if (brain->client->isStandingStill(2000)) maxDist *= 1.5; 
@@ -705,6 +713,8 @@ NodeStatus SelfLocate2X::tick()
 
 NodeStatus SelfLocate2T::tick()
 {
+    if (brain->config->useGroundTruth)
+        return brain->localizationReady() ? NodeStatus::SUCCESS : NodeStatus::FAILURE;
     double interval = getInput<double>("msecs_interval").value();
     double maxDist = getInput<double>("max_dist").value();
     if (brain->client->isStandingStill(2000)) maxDist *= 1.5; 
@@ -821,6 +831,8 @@ NodeStatus SelfLocate2T::tick()
 
 NodeStatus SelfLocateLT::tick()
 {
+    if (brain->config->useGroundTruth)
+        return brain->localizationReady() ? NodeStatus::SUCCESS : NodeStatus::FAILURE;
     double interval = getInput<double>("msecs_interval").value();
     double maxDist = getInput<double>("max_dist").value();
     if (brain->client->isStandingStill(2000)) maxDist *= 1.5; 
@@ -938,6 +950,8 @@ NodeStatus SelfLocateLT::tick()
 
 NodeStatus SelfLocatePT::tick()
 {
+    if (brain->config->useGroundTruth)
+        return brain->localizationReady() ? NodeStatus::SUCCESS : NodeStatus::FAILURE;
     double interval = getInput<double>("msecs_interval").value();
     double maxDist = getInput<double>("max_dist").value();
     if (brain->client->isStandingStill(2000)) maxDist *= 1.5; 
@@ -1054,6 +1068,8 @@ NodeStatus SelfLocatePT::tick()
 
 NodeStatus SelfLocateBorder::tick()
 {
+    if (brain->config->useGroundTruth)
+        return brain->localizationReady() ? NodeStatus::SUCCESS : NodeStatus::FAILURE;
     double interval = getInput<double>("msecs_interval").value();
     double maxDist = getInput<double>("max_dist").value();
     if (brain->client->isStandingStill(2000)) maxDist *= 1.5; 

@@ -36,6 +36,12 @@ def handle_configuration(context, *args, **kwargs):
             "vision_config_local_path": vision_config_local_file,
     }
 
+    for name, kind in [('source', str), ('ground_truth_topic', str), ('timeout_sec', float),
+                       ('translation_x', float), ('translation_y', float), ('rotation_yaw', float)]:
+        value = context.perform_substitution(LaunchConfiguration('localization_' + name))
+        if value != '':
+            config['localization.' + name] = kind(value)
+
     role = context.perform_substitution(LaunchConfiguration('role'))
     if not role == '':
         config['game.player_role'] = role
@@ -81,7 +87,11 @@ def handle_configuration(context, *args, **kwargs):
 
 
 def generate_launch_description():
-    return LaunchDescription([
+    localization_args = [DeclareLaunchArgument('localization_' + name, default_value='',
+                         description='Override localization.' + name + ' (restart required)')
+                         for name in ['source', 'ground_truth_topic', 'timeout_sec',
+                                      'translation_x', 'translation_y', 'rotation_yaw']]
+    return LaunchDescription(localization_args + [
         DeclareLaunchArgument(
             'vision_config_path',
             default_value=os.path.join(os.path.dirname(__file__), '../../../../vision/share/vision/config'),
