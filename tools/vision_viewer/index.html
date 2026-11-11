@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>机器人视觉检测</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#0b1220;color:#e5edf8;font:15px system-ui,sans-serif}header{padding:24px 28px;border-bottom:1px solid #28364d}h1{font-size:25px;margin:0 0 8px}p{color:#aebed2;line-height:1.6;margin:8px 0}main{padding:22px 28px;display:grid;grid-template-columns:minmax(0,2fr) minmax(310px,1fr);gap:20px}.panel{background:#121e30;border:1px solid #2b3d56;border-radius:12px;padding:16px}.toolbar{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:15px}button{background:#233b59;color:white;border:1px solid #476485;border-radius:6px;padding:7px 14px;cursor:pointer}canvas{width:100%;height:auto;display:block;background:#050a11;border-radius:6px}#status{font-weight:600;color:#71d9c1}#meta,#topics{font:12px monospace;overflow-wrap:anywhere;color:#aebed2;line-height:1.8}table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:10px 5px;text-align:left;border-bottom:1px solid #28364d}th{color:#aebed2}.legend{display:flex;gap:16px;flex-wrap:wrap;padding:15px 0}.legend span{color:#71d9c1}h2{font-size:17px}#error{color:#ffb7a4}@media(max-width:900px){main{grid-template-columns:1fr;padding:14px}header{padding:18px}}
+</style>
+<header><h1>机器人视觉检测</h1><p>只读观察 · 原始相机图像与 ROS 检测结果按时间戳匹配</p></header>
+<main><section class="panel"><div class="toolbar"><label><input id="boxes" type="checkbox" checked> 检测框</label><label><input id="landmarks" type="checkbox"> 只看定位地标</label><button id="pause">暂停画面</button><button id="save">保存当前截图</button></div><canvas id="canvas" width="960" height="540"></canvas><div class="legend"><span>L └ 转角</span><span>T ┬ 三岔交点</span><span>X ╳ 中线与中心圆交点</span><span>P · 罚球点</span></div><p id="status">正在连接…</p><div id="meta"></div><p id="error"></p></section>
+<aside class="panel"><h2>本帧识别结果 <span id="count">0</span></h2><p>坐标为视觉节点输出的机器人基座相对坐标，单位米。显示投影估计；深度估计可展开查看。它们不是球场全局坐标。图中序号与列表对应，仅用于当前帧，不是跨帧跟踪 ID。</p><table><thead><tr><th>类别 / 置信度</th><th>投影坐标 x, y, z</th></tr></thead><tbody id="objects"></tbody></table><p>无框时请看状态提示：“无检测目标”与“未收到检测消息”是两种不同情况。</p><div id="topics"></div></aside></main>
+<script>
+const $=id=>document.getElementById(id),ctx=$('canvas').getContext('2d');
+let paused=false,last=null,picture=null;
+const colors={LCross:'#63e6be',TCross:'#ffd166',XCross:'#80bdff',PenaltyPoint:'#e5a0ff',Ball:'#ff9478'};
+const fmt=v=>Number.isFinite(v)?v.toFixed(2):'—';
+const shortNames={LCross:'L',TCross:'T',XCross:'X',PenaltyPoint:'P',Goalpost:'Post',Ball:'Ball',Person:'Person',Opponent:'Opp'};
+function draw(){
+  if(!last||!picture)return;
+  const c=$('canvas'),width=picture.naturalWidth,height=picture.naturalHeight;
+  const displayWidth=c.clientWidth||width,scale=displayWidth/width,dpr=window.devicePixelRatio||1;
+  c.width=Math.round(displayWidth*dpr);c.height=Math.round(displayWidth*height/width*dpr);
+  ctx.setTransform(c.width/width,0,0,c.height/height,0,0);
+  ctx.drawImage(picture,0,0,width,height);
+  const objects=last.objects.map((o,i)=>({...o,id:i+1})).filter(o=>!$('landmarks').checked||['LCross','TCross','XCross','PenaltyPoint'].includes(o.label));
+  $('count').textContent=objects.length;$('objects').replaceChildren();
+  const placed=[],padding=3/scale,labelHeight=18/scale,gap=2/scale;
+  ctx.font=`${12/scale}px sans-serif`;
+  for(const o of objects){
+    const color=colors[o.label]||'#f5f7fa';
+    if($('boxes').checked){
+      const[x1,y1,x2,y2]=o.box;
+      ctx.strokeStyle=color;ctx.lineWidth=1/scale;ctx.strokeRect(x1,y1,x2-x1,y2-y1);
+      const label=`#${o.id} ${shortNames[o.label]||o.label}`;
+      const w=ctx.measureText(label).width+padding*2,h=labelHeight;
+      const clampX=x=>Math.max(0,Math.min(x,width-w));
+      const clampY=y=>Math.max(0,Math.min(y,height-h));
+      const candidates=[];
+      for(let step=0;step<20;step++){
+        for(const x of [x1,x2-w]){
+          candidates.push({x:clampX(x),y:clampY(y1-h-gap-step*(h+gap))});
+          candidates.push({x:clampX(x),y:clampY(y2+gap+step*(h+gap))});
+        }
+      }
+      let best=candidates[0],bestOverlap=Infinity;
+      for(const candidate of candidates){
+        const area=placed.reduce((sum,r)=>sum+Math.max(0,Math.min(candidate.x+w+gap,r.x+r.w)-Math.max(candidate.x-gap,r.x))*Math.max(0,Math.min(candidate.y+h+gap,r.y+r.h)-Math.max(candidate.y-gap,r.y)),0);
+        if(area<bestOverlap){best=candidate;bestOverlap=area;if(area===0)break;}
+      }
+      placed.push({...best,w,h});
+      ctx.beginPath();ctx.moveTo((x1+x2)/2,y1);ctx.lineTo(best.x+w/2,best.y+h/2);ctx.stroke();
+      ctx.fillStyle='rgba(11,18,32,0.88)';ctx.fillRect(best.x,best.y,w,h);
+      ctx.fillStyle=color;ctx.fillText(label,best.x+padding,best.y+13/scale);
+    }
+    const tr=document.createElement('tr'),a=document.createElement('td'),b=document.createElement('td');
+    a.textContent=`#${o.id} ${o.label} ${fmt(o.confidence)}%`;a.style.color=color;
+    b.textContent=o.projection.map(fmt).join(', ')||'—';
+    const details=document.createElement('details'),summary=document.createElement('summary');
+    summary.textContent='深度估计';details.append(summary,document.createTextNode(o.position.map(fmt).join(', ')||'无'));
+    b.append(details);tr.append(a,b);$('objects').append(tr);
+  }
+}
+window.addEventListener('resize',draw);
+$('pause').onclick=()=>{paused=!paused;$('pause').textContent=paused?'继续实时画面':'暂停画面';if(paused)$('status').textContent='画面已暂停（非实时）';};
+$('boxes').onchange=draw;$('landmarks').onchange=draw;
+$('save').onclick=()=>{if(!picture)return;const a=document.createElement('a');a.download=`vision-${Date.now()}.png`;a.href=$('canvas').toDataURL('image/png');a.click();};
+async function refresh(){try{if(!paused){const response=await fetch('/api/frame',{cache:'no-store',signal:AbortSignal.timeout(5000)});if(!response.ok)throw Error(`HTTP ${response.status}`);const data=await response.json();if(!paused){last=data;$('status').textContent=data.status;$('error').textContent=data.error||'';$('meta').textContent=`相机消息距今 ${data.image_age??'—'} s · 检测消息距今 ${data.detection_age??'—'} s · 匹配时间差 ${data.delta_ms??'—'} ms`;$('topics').textContent=`相机：${data.config.image_topic}\n检测：${data.config.detection_topic}\n最大匹配差：${data.config.max_delta_ms} ms`;if(data.image){const img=new Image();img.src='data:image/jpeg;base64,'+data.image;await img.decode();if(!paused){picture=img;draw();}}}}}catch(e){$('status').textContent='查看器连接中断，画面可能已过期';$('error').textContent=e.message;}finally{setTimeout(refresh,200);}}
+refresh();
+</script></html>

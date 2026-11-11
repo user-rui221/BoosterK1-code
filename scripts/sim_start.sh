@@ -18,5 +18,5 @@ nohup ros2 launch vision launch.py sim:=true > vision.log 2>&1 &
 echo "[START BRAIN]"
 nohup ros2 launch brain launch.py sim:=true "$@"  > brain.log 2>&1 &
 echo "[START GAME_CONTROLLER]"
-nohup ros2 launch game_controller launch.py sim:=true > game_controller.log 2>&1 &
+nohup ros2 launch game_controller launch.py sim:=true port:="${GC_PORT:-3838}" > game_controller.log 2>&1 &
 echo "[DONE]"

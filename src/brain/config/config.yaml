@@ -10,7 +10,7 @@ brain_node:
       rotation_yaw: 0.0 # radians; use pi when attacking world -X
 
     game:
-      team_id: 29 # must be consistent with GameControl
+      team_id: 1 # must be consistent with GameControl
       player_id: 1 # 1 | 2 | 3 | 4 | 5
       field_type: "adult_size" # adult_size | kid_size | robo_league
       player_role: "striker" # striker | goal_keeper
@@ -90,9 +90,9 @@ brain_node:
         # depth_image_topic: "/zed/zed_node/depth/depth_registered" # zed
         # depth_camera_info_topic: "/zed/zed_node/depth/camera_info" # zed
 
-        image_camera_info_topic: "/StereoNetNode/rectified_image" # d-robotics
-        depth_image_topic: "/StereoNetNode/stereonet_depth" # d-robotics
-        depth_camera_info_topic: "/StereoNetNode/stereonet_depth/camera_info" # d-robotics
+        image_camera_info_topic: "/rgbd_camera/rgb/camera_info" # simulator
+        depth_image_topic: "/rgbd_camera/depth/image_raw" # simulator
+        depth_camera_info_topic: "/rgbd_camera/depth/camera_info" # simulator
 
         
         # image_camera_info_topic: "/camera/robot0_rgbd_camera/rgb/camera_info" # simulated

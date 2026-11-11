@@ -12,7 +12,7 @@ export FASTRTPS_DEFAULT_PROFILES_FILE=/opt/booster/BoosterRos2/fastdds_profile_u
 
 echo "[START ROBOCUP NODES]"
 echo "[START GAME_CONTROLLER]"
-nohup ros2 launch game_controller launch.py sim:=true > game_controller.log 2>&1 &
+nohup ros2 launch game_controller launch.py sim:=true port:="${GC_PORT:-3838}" > game_controller.log 2>&1 &
 
 # define robot configurations: name, team_id, player_id, role
 declare -a ROBOTS=(

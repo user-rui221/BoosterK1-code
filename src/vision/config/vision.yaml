@@ -3,9 +3,9 @@ camera:
   # depth_topic: "/camera/robot0_rgbd_camera/depth/image_raw" # sim
   # intrin_topic: "/camera/robot0_rgbd_camera/rgb/camera_info" # sim
 
-  color_topic: "/StereoNetNode/rectified_image" # d-robotics
-  depth_topic: "/StereoNetNode/stereonet_depth" # d-robotics
-  intrin_topic: "/StereoNetNode/stereonet_depth/camera_info" # d-robotics
+  color_topic: "/rgbd_camera/rgb/image_compressed" # simulator
+  depth_topic: "/rgbd_camera/depth/image_raw" # simulator
+  intrin_topic: "/rgbd_camera/rgb/camera_info" # simulator
 
   # color_topic: "/camera/color/image_raw" # orbbec
   # depth_topic: "/camera/depth/image_raw" # orbbec
@@ -53,7 +53,7 @@ camera:
   yaw_compensation: 0
   z_compensation: 0
 detection_model:
-  model_path: ./src/vision/model/best_digua_second_10.3.engine
+  model_path: ./src/vision/model/sim_data_det_0126.onnx
   confidence_threshold: 0.2
   nms_threshold: 0.4
   classnames: [Ball, Goalpost, Person, LCross, TCross, XCross, PenaltyPoint, Opponent, BRMarker]
@@ -70,7 +70,7 @@ detection_model:
       Opponent: 0.5
       BRMarker: 0.2
 segmentation_model:
-  model_path: ./src/vision/model/best_seg_orin_10.3.engine
+  model_path: ./src/vision/model/sim_data_seg_0126.onnx
   confidence_threshold: 0.3
   nms_threshold: 0.9
 use_depth: false

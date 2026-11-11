@@ -10,3 +10,8 @@ build_image
 build_ros2
 dist
 .DS_Store
+__pycache__/
+*.pyc
+docs/
+/AGENTS.md
+/third_party/onnxruntime-linux-x64-1.23.2/
