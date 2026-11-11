@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <string>
+#include "types.h"
 
 #include "booster_interface/srv/rpc_service.hpp"
 #include "booster_interface/msg/booster_api_req_msg.hpp"
@@ -22,6 +23,7 @@ public:
     RobotClient(Brain* argBrain) : brain(argBrain) {}
 
     void init(string robot_name);
+    void resetRound();
 
     /**
      * @brief 
@@ -124,7 +126,14 @@ private:
     int call(booster_interface::msg::BoosterApiReqMsg msg);
     rclcpp::Publisher<booster_msgs::msg::RpcReqMsg>::SharedPtr publisher;
     Brain *brain;
-    double _vx, _vy, _vtheta;
+    double _vx = 0, _vy = 0, _vtheta = 0;
+    Pose2D target_temp_r{};
+    rclcpp::Time timeEndTempTarget{0, 0, RCL_ROS_TIME};
+    double breakOscillate = 0;
+    string mode2 = "longRange", mode3 = "longRange";
+    bool isBacking = false, should_avoid_in_move = false;
+    rclcpp::Time timeEndAvoid{0, 0, RCL_ROS_TIME};
+    double avoidDir = 1;
     rclcpp::Time _lastCmdTime;
     rclcpp::Time _lastNonZeroCmdTime;
 };

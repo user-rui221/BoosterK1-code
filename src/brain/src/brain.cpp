@@ -203,6 +203,11 @@ void Brain::init()
         RCLCPP_WARN(get_logger(), "Waiting for ground truth; movement is inhibited until a valid pose arrives");
     }
 
+    roundResetStatus = create_publisher<std_msgs::msg::String>("/booster_soccer/round_reset/status", 10);
+    roundResetSubscription = create_subscription<std_msgs::msg::String>(
+        "/booster_soccer/round_reset/request", 10,
+        [this](const std_msgs::msg::String &msg) { roundResetCallback(msg); });
+
     string topic_suffix = "";
     if(config->get_robot_name() != "") {
         RCLCPP_INFO(this->get_logger(), "Robot name set to: %s", config->get_robot_name().c_str());
@@ -338,7 +343,15 @@ void Brain::loadConfig()
 void Brain::tick()
 {
     std::unique_lock<std::recursive_mutex> localizationLock(localizationMutex, std::defer_lock);
-    if (config->useGroundTruth) localizationLock.lock();
+    localizationLock.lock();
+    if (roundResetPending) resetRound();
+    if (roundNeedsLocalization && tree->getEntry<bool>("odom_calibrated"))
+        roundNeedsLocalization = false;
+    // A new round may not move until its localization has been established.
+    if (roundNeedsLocalization && tree->getEntry<string>("gc_game_state") != "INITIAL") {
+        client->setVelocity(0, 0, 0);
+        return;
+    }
     if (config->useGroundTruth) {
         const bool ready = localizationReady();
         tree->setEntry<bool>("odom_calibrated", ready);
@@ -402,7 +415,7 @@ void Brain::handleSpecialStates() {
         data->isDirectShoot = false;
     }
 
-    static int lastScore = 0;
+
     if (data->score > lastScore) {
         tree->setEntry<bool>("we_just_scored", true);
         lastScore = data->score;
@@ -471,7 +484,7 @@ void Brain::handleCooperation() {
 
 
     // Process ball position information reported by teammates
-    static rclcpp::Time lastTmBallPosTime = get_clock()->now();
+
     const double TM_BALL_TIMEOUT = 1000.; 
     const double RANGE_THRESHOLD = config->get_tm_ball_dist_threshold(); 
     int trustedTMIdx = -1;
@@ -715,20 +728,20 @@ void Brain::updateRobotMemory() {
 
 void Brain::updateKickoffMemory() {
     
-    static Point ballPos;
+
     const double BALL_MOVE_THRESHOLD_FACTOR = 0.15; 
     const double BALL_MOVE_THRESHOLD_MIN = 0.3; 
     auto ballMoved = [=]() {
         if (!data->ballDetected) return false; 
         double range = data->ball.range;
         double threshold = max(range * BALL_MOVE_THRESHOLD_FACTOR, BALL_MOVE_THRESHOLD_MIN);
-        double posChange = norm(data->ball.posToRobot.x - ballPos.x, data->ball.posToRobot.y - ballPos.y);
+        double posChange = norm(data->ball.posToRobot.x - kickoffBallPos.x, data->ball.posToRobot.y - kickoffBallPos.y);
         return posChange > threshold;
     };
-    static rclcpp::Time kickOffTime;
+
     const double TIMEOUT = 1000 * 10; 
     auto timeReached = [=]() {
-        return msecsSince(kickOffTime) > TIMEOUT;
+        return msecsSince(kickoffWaitTime) > TIMEOUT;
     };
     bool isWaitingForKickoff = (
         (tree->getEntry<string>("gc_game_state") == "SET"  || tree->getEntry<string>("gc_game_state") == "READY")
@@ -739,8 +752,8 @@ void Brain::updateKickoffMemory() {
         && !tree->getEntry<bool>("gc_is_sub_state_kickoff_side")
     );
     if ( isWaitingForFreekickKickoff || isWaitingForKickoff) {
-        ballPos = data->ball.posToRobot;
-        kickOffTime = get_clock()->now();
+        kickoffBallPos = data->ball.posToRobot;
+        kickoffWaitTime = get_clock()->now();
         tree->setEntry<bool>("wait_for_opponent_kickoff", true);
     } else if (tree->getEntry<bool>("wait_for_opponent_kickoff")) {
         if (ballMoved() || timeReached()) {
@@ -1087,7 +1100,7 @@ rclcpp::Time Brain::timePointFromHeader(std_msgs::msg::Header header) {
 void Brain::joystickCallback(const booster_interface::msg::RemoteControllerState &joy)
 {
     std::unique_lock<std::recursive_mutex> localizationLock(localizationMutex, std::defer_lock);
-    if (config->useGroundTruth) localizationLock.lock();
+    localizationLock.lock();
     auto log_ = [=](string msg) {
         log->debug("joystick", msg);
     };
@@ -1141,7 +1154,7 @@ void Brain::joystickCallback(const booster_interface::msg::RemoteControllerState
 void Brain::gameControlCallback(const game_controller_interface::msg::GameControlData &msg)
 {
     std::unique_lock<std::recursive_mutex> localizationLock(localizationMutex, std::defer_lock);
-    if (config->useGroundTruth) localizationLock.lock();
+    localizationLock.lock();
     if (get_parameter(GAME_AGENT_MODE_PARAM).as_bool()) {
         prtWarn("Agent mode, ignore game control");
         return;
@@ -1160,7 +1173,15 @@ void Brain::gameControlCallback(const game_controller_interface::msg::GameContro
 
     int teamId = config->get_team_id();
     int playerId = config->get_player_id();
+    if (msg.state >= gameStateMap.size() || msg.secondary_state_info[1] >= 3 ||
+        playerId < 1 || playerId > HL_MAX_NUM_PLAYERS ||
+        (msg.teams[0].team_number != teamId && msg.teams[1].team_number != teamId) ||
+        msg.teams[0].players.size() < HL_MAX_NUM_PLAYERS ||
+        msg.teams[1].players.size() < HL_MAX_NUM_PLAYERS) return;
     string gameState = gameStateMap[static_cast<int>(msg.state)];
+    if (gameState == "INITIAL" && lastGameState != "INITIAL") roundResetPending = true;
+    // An explicit reset owns INITIAL until the tick thread has completed cleanup.
+    if (roundResetPending && gameState != "INITIAL") return;
     tree->setEntry<string>("gc_game_state", gameState);
     bool isKickOffSide = (msg.kick_off_team == teamId); // Whether our team is the kickoff side
     tree->setEntry<bool>("gc_is_kickoff_side", isKickOffSide);
@@ -1274,7 +1295,7 @@ void Brain::gameControlCallback(const game_controller_interface::msg::GameContro
 void Brain::detectionsCallback(const vision_interface::msg::Detections &msg)
 {
     std::unique_lock<std::recursive_mutex> localizationLock(localizationMutex, std::defer_lock);
-    if (config->useGroundTruth) localizationLock.lock();
+    localizationLock.lock();
     if (!localizationReady()) return;
     // std::lock_guard<std::mutex> guard(data->brainMutex);
     
@@ -1282,6 +1303,7 @@ void Brain::detectionsCallback(const vision_interface::msg::Detections &msg)
     // rclcpp::Time timePoint(detection_time_stamp.sec, detection_time_stamp.nanosec);
     data->camConnected = true;
     auto timePoint = timePointFromHeader(msg.header);
+    if (roundGeneration && timePoint < roundResetTime) return;
 
     auto now = get_clock()->now();
     data->timeLastDet = timePoint; // Used to output delay information during debugging
@@ -1339,9 +1361,10 @@ void Brain::updateLinePosToField(FieldLine& line) {
 void Brain::fieldLineCallback(const vision_interface::msg::LineSegments &msg)
 {
     std::unique_lock<std::recursive_mutex> localizationLock(localizationMutex, std::defer_lock);
-    if (config->useGroundTruth) localizationLock.lock();
+    localizationLock.lock();
     if (!localizationReady()) return;
     auto timePoint = timePointFromHeader(msg.header);
+    if (roundGeneration && timePoint < roundResetTime) return;
 
     auto now = get_clock()->now();
     data->timeLastLineDet = timePoint; // Used to output delay information during debugging
@@ -1372,7 +1395,7 @@ void Brain::fieldLineCallback(const vision_interface::msg::LineSegments &msg)
 void Brain::odometerCallback(const booster_interface::msg::Odometer &msg)
 {
     std::unique_lock<std::recursive_mutex> localizationLock(localizationMutex, std::defer_lock);
-    if (config->useGroundTruth) localizationLock.lock();
+    localizationLock.lock();
 
     data->robotPoseToOdom.x = msg.x * config->get_robot_odom_factor();
     data->robotPoseToOdom.y = msg.y * config->get_robot_odom_factor();
@@ -1394,7 +1417,7 @@ void Brain::odometerCallback(const booster_interface::msg::Odometer &msg)
 void Brain::lowStateCallback(const booster_interface::msg::LowState &msg)
 {
     std::unique_lock<std::recursive_mutex> localizationLock(localizationMutex, std::defer_lock);
-    if (config->useGroundTruth) localizationLock.lock();
+    localizationLock.lock();
     data->headYaw = msg.motor_state_serial[0].q;
     data->headPitch = msg.motor_state_serial[1].q;
     log->debug("head_angles", format("pitch: %.1f, yaw: %.1f", data->headYaw, data->headPitch));
@@ -1403,7 +1426,7 @@ void Brain::lowStateCallback(const booster_interface::msg::LowState &msg)
 void Brain::imageCameraInfoCallback(const sensor_msgs::msg::CameraInfo::SharedPtr msg)
 {
     std::unique_lock<std::recursive_mutex> localizationLock(localizationMutex, std::defer_lock);
-    if (config->useGroundTruth) localizationLock.lock();
+    localizationLock.lock();
     config->cameraImageWidth = msg->width;
     config->cameraImageHeight = msg->height;
 }
@@ -1411,7 +1434,7 @@ void Brain::imageCameraInfoCallback(const sensor_msgs::msg::CameraInfo::SharedPt
 void Brain::depthCameraInfoCallback(const sensor_msgs::msg::CameraInfo::SharedPtr msg)
 {
     std::unique_lock<std::recursive_mutex> localizationLock(localizationMutex, std::defer_lock);
-    if (config->useGroundTruth) localizationLock.lock();
+    localizationLock.lock();
 
     // Using CameraInfo, calculate the camera's fovx and fovy
     config->depthCameraFx = static_cast<double>(msg->k[0]);
@@ -1427,7 +1450,7 @@ void Brain::depthCameraInfoCallback(const sensor_msgs::msg::CameraInfo::SharedPt
 void Brain::headPoseCallback(const geometry_msgs::msg::Pose& msg)
 {
     std::unique_lock<std::recursive_mutex> localizationLock(localizationMutex, std::defer_lock);
-    if (config->useGroundTruth) localizationLock.lock();
+    localizationLock.lock();
     // Calculate head_to_base matrix
     Eigen::Matrix4d headToBase = Eigen::Matrix4d::Identity();
     
@@ -1454,7 +1477,7 @@ void Brain::headPoseCallback(const geometry_msgs::msg::Pose& msg)
 void Brain::recoveryStateCallback(const booster_interface::msg::RawBytesMsg &msg)
 {
     std::unique_lock<std::recursive_mutex> localizationLock(localizationMutex, std::defer_lock);
-    if (config->useGroundTruth) localizationLock.lock();
+    localizationLock.lock();
     // uint8_t state; // IS_READY = 0, IS_FALLING = 1, HAS_FALLEN = 2, IS_GETTING_UP = 3,  
     // uint8_t is_recovery_available; // 1 for available, 0 for not available
     // Using RobotRecoveryState structure, convert msg inside msg to RobotRecoveryState
@@ -1757,7 +1780,6 @@ vector<GameObject> Brain::getGameObjects(const vision_interface::msg::Detections
 
 void Brain::detectProcessBalls(const vector<GameObject> &ballObjs)
 {
-    static rclcpp::Time lastSeenRealBallTime; 
     double bestConfidence = 0;
     int indexRealBall = -1;  // Which ball is considered real, -1 means no ball detected
 
@@ -1882,6 +1904,7 @@ void Brain::detectProcessRobots(const vector<GameObject> &robotObjs) {
 
 void Brain::detectProcessVisionBox(const vision_interface::msg::Detections &msg) {    
     auto timePoint = timePointFromHeader(msg.header);
+    if (roundGeneration && timePoint < roundResetTime) return;
 
     // Process and record vision information
     VisionBox vbox;
@@ -2018,8 +2041,9 @@ void Brain::updateFieldPos(GameObject &obj) {
 void Brain::compressedDepthImageCallback(const sensor_msgs::msg::CompressedImage::SharedPtr msg)
 {
     std::unique_lock<std::recursive_mutex> localizationLock(localizationMutex, std::defer_lock);
-    if (config->useGroundTruth) localizationLock.lock();
+    localizationLock.lock();
     if (!localizationReady()) return;
+    if (roundGeneration && timePointFromHeader(msg->header) < roundResetTime) return;
     try {
         // Decode compressed image
         cv::Mat compressed_data = cv::Mat(msg->data);
@@ -2051,8 +2075,9 @@ void Brain::compressedDepthImageCallback(const sensor_msgs::msg::CompressedImage
 void Brain::depthImageCallback(const sensor_msgs::msg::Image::ConstSharedPtr &msg)
 {
     std::unique_lock<std::recursive_mutex> localizationLock(localizationMutex, std::defer_lock);
-    if (config->useGroundTruth) localizationLock.lock();
+    localizationLock.lock();
     if (!localizationReady()) return;
+    if (roundGeneration && timePointFromHeader(msg->header) < roundResetTime) return;
     try {
         // Check if the image data is valid
         if (msg->data.empty() || msg->height == 0 || msg->width == 0) {
@@ -2454,7 +2479,7 @@ bool Brain::isFreekickStartPlacing() {
 
 void Brain::agentCommandCallback(const std_msgs::msg::String::SharedPtr msg) {
     std::unique_lock<std::recursive_mutex> localizationLock(localizationMutex, std::defer_lock);
-    if (config->useGroundTruth) localizationLock.lock();
+    localizationLock.lock();
     RCLCPP_INFO(get_logger(), "Received agent command: %s", msg->data.c_str());
 
     data->timeLastGamecontrolMsg = get_clock()->now();
@@ -2742,6 +2767,7 @@ void Brain::groundTruthCallback(const geometry_msgs::msg::Pose2D &msg) {
     const bool clockReset = data->groundTruthReceived &&
         get_clock()->now() < data->lastSuccessfulLocalizeTime;
     const bool recovering = !localizationReady() || clockReset;
+    if (clockReset) roundResetTime = get_clock()->now();
     if (recovering) {
         data->groundTruthReceived = false;
         haltForInvalidLocalization();

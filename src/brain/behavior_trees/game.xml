@@ -43,6 +43,7 @@
 
                     <ReactiveSequence _while="gc_game_sub_state_type=='NONE'" name="normal play">
                         <ReactiveSequence _while="gc_game_state=='INITIAL'" name="stand at the field entrance position">
+                            <SetVelocity />
                             <CamScanField _while="!odom_calibrated"/>
                             <SubTree ID="CamFindAndTrackBall" _autoremap="true" _while="odom_calibrated" />
                             <SelfLocateEnterField />

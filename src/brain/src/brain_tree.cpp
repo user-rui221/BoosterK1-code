@@ -300,8 +300,6 @@ NodeStatus Chase::tick()
 
     double vx, vy, vtheta;
     Pose2D target_f, target_r; 
-    static string targetType = "direct"; 
-    static double circleBackDir = 1.0; 
     double dirThreshold = M_PI / 2;
     if (targetType == "direct") dirThreshold *= 1.2;
 
@@ -344,13 +342,6 @@ NodeStatus Chase::tick()
     vx = cap(vx, vxLimit, -vxLimit);
     vy = cap(vy, vyLimit, -vyLimit);
     vtheta = cap(vtheta, vthetaLimit, -vthetaLimit);
-
-    static double smoothVx = 0.0;
-    static double smoothVy = 0.0;
-    static double smoothVtheta = 0.0;
-    smoothVx = smoothVx * 0.7 + vx * 0.3;
-    smoothVy = smoothVy * 0.7 + vy * 0.3;
-    smoothVtheta = smoothVtheta * 0.7 + vtheta * 0.3;
 
     brain->client->setVelocity(vx, vy, vtheta);
     return NodeStatus::SUCCESS;
@@ -503,6 +494,7 @@ NodeStatus GoToFreekickPosition::onRunning() {
     return NodeStatus::RUNNING;
 }
 void GoToFreekickPosition::onHalted() {
+    brain->client->setVelocity(0, 0, 0);
 }
 
 NodeStatus GoToGoalBlockingPosition::tick() {
@@ -1063,6 +1055,7 @@ NodeStatus Kick::onRunning()
 
 void Kick::onHalted()
 {
+    brain->client->setVelocity(0, 0, 0);
     _startTime -= rclcpp::Duration(100, 0);
 }
 
@@ -1254,6 +1247,7 @@ NodeStatus RobotFindBall::onRunning()
 
 void RobotFindBall::onHalted()
 {
+    brain->client->setVelocity(0, 0, 0);
     _turnDir = 1.0;
 }
 
@@ -1502,3 +1496,18 @@ NodeStatus PrintMsg::tick()
     return NodeStatus::SUCCESS;
 }
 
+
+void BrainTree::resetRound() {
+    const bool kickoff = getEntry<bool>("gc_is_kickoff_side");
+    const bool penalty = getEntry<bool>("gc_is_under_penalty");
+    halt();
+    init();
+    setEntry<string>("gc_game_state", "INITIAL");
+    setEntry<string>("gc_game_sub_state_type", "NONE");
+    setEntry<string>("gc_game_sub_state", "STOP");
+    setEntry<bool>("gc_is_kickoff_side", kickoff);
+    setEntry<bool>("gc_is_under_penalty", penalty);
+    setEntry<int>("control_state", 3);
+}
+
+void TurnOnSpot::onHalted() { brain->client->setVelocity(0, 0, 0); }

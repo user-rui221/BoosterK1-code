@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <deque>
 #include <rclcpp/rclcpp.hpp>
 #include <opencv2/opencv.hpp>
 #include <std_msgs/msg/string.hpp>
@@ -89,6 +90,22 @@ public:
 
     // Called in the ROS2 loop
     void tick();
+    // Requests are queued by ROS callbacks and executed only by the tick thread.
+    void resetRound();
+    void roundResetCallback(const std_msgs::msg::String &msg);
+    bool roundResetPending = false;
+    bool roundNeedsLocalization = false;
+    uint64_t roundGeneration = 0;
+    rclcpp::Time roundResetTime{0, 0, RCL_ROS_TIME};
+    string pendingResetId;
+    std::deque<string> completedResetIds;
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr roundResetSubscription;
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr roundResetStatus;
+    int lastScore = 0;
+    Point kickoffBallPos{};
+    rclcpp::Time kickoffWaitTime{0, 0, RCL_ROS_TIME};
+    rclcpp::Time lastTmBallPosTime{0, 0, RCL_ROS_TIME};
+    rclcpp::Time lastSeenRealBallTime{0, 0, RCL_ROS_TIME};
 
     // Handle special states, such as kickoff, free kick, etc.
     void handleSpecialStates();

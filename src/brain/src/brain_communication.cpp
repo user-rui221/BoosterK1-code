@@ -308,6 +308,7 @@ void BrainCommunication::spinDiscoveryReceiver() {
             continue;
         }
 
+        std::lock_guard<std::recursive_mutex> stateLock(brain->localizationMutex);
         if (msg.playerId == brain->config->get_player_id()) {  // Ignore own messages
             continue;
         } else {
@@ -374,6 +375,7 @@ void BrainCommunication::unicastCommunication() {
         msg.teamId = brain->config->get_team_id();
         msg.playerId = brain->config->get_player_id();
         
+        std::unique_lock<std::recursive_mutex> stateLock(brain->localizationMutex);
         string role = brain->tree->getEntry<string>("player_role");
         if (role == "striker") {
             msg.playerRole = 1;
@@ -413,6 +415,7 @@ void BrainCommunication::unicastCommunication() {
                     << RESET_CODE << endl;
             }
         }
+        stateLock.unlock();
         this_thread::sleep_for(chrono::milliseconds(UNICAST_INTERVAL_MS));
     }
 }
@@ -509,6 +512,7 @@ void BrainCommunication::spinCommunicationReceiver() {
             continue;
         }
 
+        std::lock_guard<std::recursive_mutex> stateLock(brain->localizationMutex);
         if (msg.playerId == brain->config->get_player_id()) {  // Ignore own messages
             // Handle own messages
             cout << CYAN_CODE <<  format(

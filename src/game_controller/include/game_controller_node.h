@@ -3,6 +3,12 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <map>
+#include <mutex>
+#include <atomic>
+#include <chrono>
+#include <netinet/in.h>
+#include <std_msgs/msg/string.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include "RoboCupGameControlData.h"
@@ -26,6 +32,16 @@ private:
 
     void handle_packet(HlRoboCupGameControlData &data, game_controller_interface::msg::GameControlData &msg);
 
+    struct ResetPeer {
+        sockaddr_in address;
+        std::chrono::steady_clock::time_point seen;
+    };
+    std::mutex resetMutex;
+    std::map<string, ResetPeer> resetPeers;
+    std::atomic<bool> stopping{false};
+    bool enableTestReset = true;
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr resetPublisher;
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr resetStatus;
     int _port;
     bool _enable_ip_white_list;
     vector<string> _ip_white_list;

@@ -20,6 +20,7 @@ public:
     void init();
 
     void tick();
+    void resetRound();
     void halt() { tree.haltTree(); }
 
     // get entry on blackboard
@@ -86,7 +87,7 @@ public:
 
 private:
     Brain *brain;
-    double lastDeltaDir; 
+    double lastDeltaDir = 0;
     rclcpp::Time timeLastTick; 
 };
 
@@ -228,7 +229,7 @@ public:
 
     NodeStatus onRunning() override;
 
-    void onHalted() override {};
+    void onHalted() override;
 
 private:
     double _lastAngle; 
@@ -260,6 +261,8 @@ public:
 
 private:
     Brain *brain;
+    string targetType = "direct";
+    double circleBackDir = 1.0;
     string _state;     
     double _dir = 1.0; 
 };

@@ -79,6 +79,8 @@ int RobotClient::waveHand(bool doWaveHand)
 
 int RobotClient::setVelocity(double x, double y, double theta)
 {
+    // INITIAL is a stop state, including callbacks or old nodes during a transition.
+    if (brain->tree->getEntry<string>("gc_game_state") == "INITIAL" || brain->roundNeedsLocalization) x = y = theta = 0;
     if (!brain->localizationReady()) x = y = theta = 0;
     brain->log->log("RobotClient/setVelocity_in",
                     format("vx: %.2f  vy: %.2f  vtheta: %.2f", x, y, theta));
@@ -152,8 +154,8 @@ bool RobotClient::isStandingStill(double timeBuffer) {
 
 int RobotClient::moveToPoseOnField(double tx, double ty, double ttheta, double longRangeThreshold, double turnThreshold, double vxLimit, double vyLimit, double vthetaLimit, double xTolerance, double yTolerance, double thetaTolerance, bool avoidObstacle) {
     Pose2D target_f, target_r; 
-    static Pose2D target_temp_r; // for obstacle avoidance
-    static rclcpp::Time timeEndTempTarget = brain->get_clock()->now(); // Before this time, execute temp_target instead of the actual target
+
+
 
     if (brain->get_clock()->now() < timeEndTempTarget) { // Execute temporary target for obstacle avoidance
         target_r = target_temp_r;
@@ -179,7 +181,7 @@ int RobotClient::moveToPoseOnField(double tx, double ty, double ttheta, double l
     }
 
     // Far away
-    static double breakOscillate = 0.0;
+
     if (targetDist > longRangeThreshold - breakOscillate)
     {
         breakOscillate = 0.5;
@@ -252,20 +254,20 @@ int RobotClient::moveToPoseOnField(double tx, double ty, double ttheta, double l
 }
 
 int RobotClient::moveToPoseOnField2(double tx, double ty, double ttheta, double longRangeThreshold, double turnThreshold, double vxLimit, double vyLimit, double vthetaLimit, double xTolerance, double yTolerance, double thetaTolerance, bool avoidObstacle) {
-    static string mode = "longRange";
-    static bool isBacking = false;
-    static rclcpp::Time timeEndAvoid = brain->get_clock()->now();
-    static double avoidDir = 1.0; // 1.0 for turn left, -1.0 for turn right
+
+
+
+
     const double SAFE_DIST = brain->config->get_safe_distance();
     const double AVOID_SECS = brain->config->get_avoid_secs();
 
     
 
     double range = norm(tx - brain->data->robotPoseToField.x, ty - brain->data->robotPoseToField.y);
-    if (range > longRangeThreshold * (mode == "longRange" ? 0.9 : 1.0)) {
-        mode = "longRange";
+    if (range > longRangeThreshold * (mode2 == "longRange" ? 0.9 : 1.0)) {
+        mode2 = "longRange";
     } else {
-        mode = "shortRange";
+        mode2 = "shortRange";
     }
 
     double vx, vy, vtheta;
@@ -273,7 +275,7 @@ int RobotClient::moveToPoseOnField2(double tx, double ty, double ttheta, double 
     double faceDir = brain->data->robotPoseToField.theta;
     double tarDir_r = toPInPI(tarDir - faceDir); 
     auto now = brain->get_clock()->now();
-    if (mode == "longRange") { 
+    if (mode2 == "longRange") {
 
         if (fabs(tarDir_r) > turnThreshold) { 
             vx = 0.0;
@@ -322,7 +324,7 @@ int RobotClient::moveToPoseOnField2(double tx, double ty, double ttheta, double 
             }
 
         }
-    } else if (mode == "shortRange") { 
+    } else if (mode2 == "shortRange") {
         
 
         vx = range * cos(tarDir_r);
@@ -353,25 +355,25 @@ int RobotClient::moveToPoseOnField2(double tx, double ty, double ttheta, double 
 }
 
 int RobotClient::moveToPoseOnField3(double tx, double ty, double ttheta, double longRangeThreshold, double turnThreshold, double vxLimit, double vyLimit, double vthetaLimit, double xTolerance, double yTolerance, double thetaTolerance, bool avoidObstacle) {
-    static string mode = "longRange";
-    static bool should_avoid_in_move = false;
+
+
     bool isFreekickStartPlacing = brain->isFreekickStartPlacing();
 
     const double SAFE_DIST = isFreekickStartPlacing ? brain->config->get_freekick_start_placing_safe_distance() : brain->config->get_safe_distance();
     const double AVOID_SECS = isFreekickStartPlacing ? brain->config->get_freekick_start_placing_avoid_secs() : brain->config->get_avoid_secs();
 
     double range = norm(tx - brain->data->robotPoseToField.x, ty - brain->data->robotPoseToField.y);
-    if (range > longRangeThreshold * (mode == "longRange" ? 0.9 : 1.0)) { 
-        mode = "longRange";
+    if (range > longRangeThreshold * (mode3 == "longRange" ? 0.9 : 1.0)) {
+        mode3 = "longRange";
     } else {
-        mode = "shortRange";
+        mode3 = "shortRange";
     }
 
     double vx, vy, vtheta;
     double tarDir = atan2(ty - brain->data->robotPoseToField.y, tx - brain->data->robotPoseToField.x);
     double faceDir = brain->data->robotPoseToField.theta;
     double tarDir_r = toPInPI(tarDir - faceDir); 
-    if (mode == "longRange") { 
+    if (mode3 == "longRange") {
         if (fabs(tarDir_r) > turnThreshold) { 
             vx = 0.0;
             vy = 0.0;
@@ -428,7 +430,7 @@ int RobotClient::moveToPoseOnField3(double tx, double ty, double ttheta, double 
             }
 
         }
-    } else if (mode == "shortRange") { 
+    } else if (mode3 == "shortRange") {
 
         vx = range * cos(tarDir_r);
         vy = range * sin(tarDir_r);
@@ -516,4 +518,15 @@ double RobotClient::msecsToCollide(double vx, double vy, double vtheta, double m
     }
 
     return min(maxTime, minDist / norm(vx, vy) * 1000);
+}
+
+void RobotClient::resetRound() {
+    target_temp_r = {};
+    timeEndTempTarget = timeEndAvoid = brain->get_clock()->now();
+    breakOscillate = 0;
+    mode2 = mode3 = "longRange";
+    isBacking = should_avoid_in_move = false;
+    avoidDir = 1;
+    _lastNonZeroCmdTime = _lastCmdTime = brain->get_clock()->now();
+    setVelocity(0, 0, 0);
 }
